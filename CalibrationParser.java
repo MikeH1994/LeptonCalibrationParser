@@ -14,23 +14,79 @@ import ij.gui.NewImage;
 import ij.io.FileSaver;
 import ij.plugin.*;
 import ij.plugin.frame.*;
-
+import ij.gui.OvalRoi;
 public class CalibrationParser{
 	String _folderpath = "C:\\Users\\Micha\\Desktop\\Scientific\\Lepton Calibration\\DEC_16_lepton\\Calib_October_17\\";
 	int _width = 160;
 	int _height = 120;
-	boolean _useJPEGs = true;
-	boolean _serialise = true;
-	public void run(String rootPath) {
+	boolean _useJPEGs = false;
+	boolean _serialise = false;
+	public void run(String rootPath,double ratio) {
+		//ROI oval represented by box surrounding it; x0,y0 are topleft corner.
+		int midX = _width/2;
+		int midY = _height/2;
+		int x1,y1,roiRadius;
+		double size;
+		double folderMean = 0, folderSigma = 0;
+		double imageMean = 0, imageSigma = 0;
+
 		ArrayList<String> subfolders = getSubFolderPaths(rootPath);
 		ArrayList<String> files;
 		ImagePlus image;
+		ImagePlus edgeDetectedImage;
+		Canny_Edge_Detector edgeDetector = new Canny_Edge_Detector();
+		
+		OvalRoi roi;
+		ImageStatistics stats;
+	
+		
 		for(String folderpath:subfolders) {
+			folderMean = 0;
+			folderSigma = 0;
 			files = getFilepathsInFolder(folderpath);
 			for(String filepath:files) {
 				image = loadImagePlus(filepath);
+				edgeDetectedImage = edgeDetector.process(image);
+				roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
+				x1 = midX-roiRadius;
+				y1 = midY-roiRadius;
+				size = 2*(roiRadius*ratio);
+				roi = new OvalRoi(x1,y1,size,size);
+				image.setRoi(roi);
+				stats = image.getProcessor().getStatistics();
+				imageMean = stats.mean;
+				imageSigma = stats.stdDev;
+				folderMean+=imageMean;
+				folderSigma+=imageSigma*imageSigma;
+			}
+			
+		}
+	}
+	public int getROIRadiusFromEdgeDetectedImage(ImagePlus img) {
+		int midX = _width/2;
+		int midY = _height/2;
+		int x,y;
+		int minDistanceToEdge = Integer.MAX_VALUE;
+		int currDistance;
+		for(int xInc = -1; xInc<2; xInc++) {
+			for(int yInc = -1; yInc<2; yInc++) {
+				x = midX;
+				y = midY;
+				currDistance = 0;
+				if (yInc!=0 && xInc!=0) {
+					while(img.getPixel(x,y)[0]==0 && currDistance<30) {
+						x+=xInc;
+						y+=yInc;
+						currDistance++;
+					}
+					currDistance = (int) (Math.sqrt(Math.pow(currDistance*xInc,2)+Math.pow(currDistance*yInc,2)));
+					if (currDistance<minDistanceToEdge) {
+						minDistanceToEdge = currDistance;
+					}
+				}
 			}
 		}
+		return Math.max(minDistanceToEdge,2);
 	}
 	public ArrayList<String> getSubFolderPaths(String rootPath){
 		ArrayList<String> subfolderList = new ArrayList<String>();
@@ -55,7 +111,6 @@ public class CalibrationParser{
 		String[] directories = folder.list(new FilenameFilter() {
 			  @Override
 			  public boolean accept(File current, String name) {
-				  boolean flag = false;
 				  if (!new File(current, name).isFile()) {
 					  return false;
 				  }
@@ -106,7 +161,7 @@ public class CalibrationParser{
 		return pixels;
 	}
 	public ImagePlus loadImagePlus(String filepath) {
-		System.out.println("loading " + filepath);
+		//System.out.println("loading " + filepath);
 		if (filepath.endsWith(".csv")) {
 			return getImagePlusFromCSV(filepath);
 		}
@@ -128,7 +183,8 @@ public class CalibrationParser{
 		}
 		return image;
 	}
-public static void main(String[] args) {
-		new CalibrationParser().run("D:\\Lepton\\DEC_16_lepton\\Calib_October_17\\");
+	public static void main(String[] args) {
+		new CalibrationParser().run("D:\\Lepton\\DEC_16_lepton\\Calib_October_17\\",0.667);
 	}
+
 }
