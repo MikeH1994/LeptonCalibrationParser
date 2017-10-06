@@ -3,10 +3,13 @@ import ij.process.*;
 import ij.gui.*;
 import java.awt.*;
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Scanner;
@@ -21,6 +24,7 @@ public class CalibrationParser{
 	int _height = 120;
 	boolean _useJPEGs = false;
 	boolean _serialise = false;
+	boolean _print = true;
 	public void run(String rootPath,double ratio) {
 		//ROI oval represented by box surrounding it; x0,y0 are topleft corner.
 		int midX = _width/2;
@@ -29,25 +33,36 @@ public class CalibrationParser{
 		double size;
 		double folderMean = 0, folderSigma = 0;
 		double imageMean = 0, imageSigma = 0;
+		double sampleDeviation;
 
 		ArrayList<String> subfolders = getSubFolderPaths(rootPath);
 		ArrayList<String> files;
+		ArrayList<Double> values;
+		ArrayList<String> linesToWrite = new ArrayList<String>();
+		String lineToWrite;
 		ImagePlus image;
 		ImagePlus edgeDetectedImage;
 		Canny_Edge_Detector edgeDetector = new Canny_Edge_Detector();
-		
 		OvalRoi roi;
 		ImageStatistics stats;
-	
+		
+		linesToWrite.add("Folder\tMean\tSigma");
 		
 		for(String folderpath:subfolders) {
 			folderMean = 0;
 			folderSigma = 0;
 			files = getFilepathsInFolder(folderpath);
+			values = new ArrayList<Double>();
+			if (_print) {
+				System.out.println("Loading " + folderpath);
+			}
 			for(String filepath:files) {
 				image = loadImagePlus(filepath);
 				edgeDetectedImage = edgeDetector.process(image);
 				roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
+				if (roiRadius>20 || roiRadius<4) {
+					System.out.println(filepath + "looks suspicious");
+				}
 				x1 = midX-roiRadius;
 				y1 = midY-roiRadius;
 				size = 2*(roiRadius*ratio);
@@ -58,9 +73,36 @@ public class CalibrationParser{
 				imageSigma = stats.stdDev;
 				folderMean+=imageMean;
 				folderSigma+=imageSigma*imageSigma;
+				values.add(imageMean);
 			}
-			
+			folderMean/=files.size();
+			folderSigma = Math.sqrt(folderSigma);
+			sampleDeviation = calculateStandardDeviation(folderMean, values);
+			lineToWrite = folderpath + "\t" + folderMean + "\t" + sampleDeviation;
+			linesToWrite.add(lineToWrite);
 		}
+		writeToFile(rootPath,"log.txt",linesToWrite);
+	}
+	public void writeToFile(String rootFolder, String name, ArrayList<String> linesToWrite) {
+		try {
+			PrintWriter  out = new PrintWriter(rootFolder + name,"UTF-8");
+			for(String line:linesToWrite) {
+				out.write(line + "\n");
+			}
+			out.close();
+		}catch (IOException e) {
+			System.out.println(e.getMessage());
+		}
+	}
+	public double calculateStandardDeviation(double mean, ArrayList<Double> values) {
+		//return sample deviation
+		double sd = 0;
+		for(double x_i:values) {
+			sd+=(x_i-mean)*(x_i-mean);
+		}
+		sd/=(values.size()-1);
+		sd = Math.sqrt(sd);
+		return sd;
 	}
 	public int getROIRadiusFromEdgeDetectedImage(ImagePlus img) {
 		int midX = _width/2;
@@ -161,7 +203,9 @@ public class CalibrationParser{
 		return pixels;
 	}
 	public ImagePlus loadImagePlus(String filepath) {
-		//System.out.println("loading " + filepath);
+		if (_print) {
+			//System.out.println("loading " + filepath);
+		}
 		if (filepath.endsWith(".csv")) {
 			return getImagePlusFromCSV(filepath);
 		}
