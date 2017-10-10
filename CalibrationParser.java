@@ -5,6 +5,7 @@ import java.awt.*;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FilenameFilter;
 import java.io.IOException;
@@ -25,70 +26,82 @@ public class CalibrationParser{
 	boolean _useJPEGs = false;
 	boolean _serialise = false;
 	boolean _print = true;
+	String _rootPath;
+	Canny_Edge_Detector _edgeDetector = new Canny_Edge_Detector();
+
 	public void run(String rootPath,double ratio) {
 		//ROI oval represented by box surrounding it; x0,y0 are topleft corner.
+		_rootPath = rootPath;
+		ArrayList<String> subfolders = getSubFolderPaths(rootPath);
+		
+		String header = "Folder\tMean\tSigma\tFPATemp\tSigma";
+		writeToFile(rootPath+"log.txt",header,false);
+
+		for(String folderpath:subfolders) {
+			parseFolder(folderpath,ratio);
+		}
+
+	}
+	public void delete(String filepath) {
+		File file1 = new File(filepath);
+		if (!file1.delete()) {
+			System.out.println(filepath + " could not be deleted");
+		}
+		filepath = filepath.replace(".csv",".pgm");
+		file1 = new File(filepath);
+		if (file1.exists()) {
+			if (!file1.delete()) {
+				System.out.println(filepath + " could not be deleted");
+			}
+		}
+	}
+	
+	public void parseFolder(String folderpath,double ratio) {
+		double folderMean = 0;
+		double imageMean = 0;
+		double FPATemp,FPAMean = 0, FPASigma = 0;
+		double sampleDeviation = 0;
+		int nFiles = 0;
+
 		int midX = _width/2;
 		int midY = _height/2;
-		int x1,y1,roiRadius;
 		double size;
-		double folderMean = 0, folderSigma = 0;
-		double imageMean = 0, imageSigma = 0;
-		double sampleDeviation;
 
-		ArrayList<String> subfolders = getSubFolderPaths(rootPath);
-		ArrayList<String> files;
-		ArrayList<Double> values;
-		ArrayList<String> linesToWrite = new ArrayList<String>();
-		String lineToWrite;
-		ImagePlus image;
-		ImagePlus edgeDetectedImage;
-		Canny_Edge_Detector edgeDetector = new Canny_Edge_Detector();
-		OvalRoi roi;
-		ImageStatistics stats;
-		
-		linesToWrite.add("Folder\tMean\tSigma");
-		
-		for(String folderpath:subfolders) {
-			folderMean = 0;
-			folderSigma = 0;
-			files = getFilepathsInFolder(folderpath);
-			values = new ArrayList<Double>();
-			if (_print) {
-				System.out.println("Loading " + folderpath);
+		ArrayList<String> files = getFilepathsInFolder(folderpath);
+		ArrayList<Double> FPAValues = new ArrayList<Double>();
+		ArrayList<Double> imageValues = new ArrayList<Double>();
+		for(String filepath:files) {
+			ImagePlus image = loadImagePlus(filepath);
+			ImagePlus edgeDetectedImage = _edgeDetector.process(image);
+			int roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
+			if (roiRadius>20 || roiRadius<4) {
+				System.out.println("Deleting " + filepath);
+				delete(filepath);
 			}
-			for(String filepath:files) {
-				image = loadImagePlus(filepath);
-				edgeDetectedImage = edgeDetector.process(image);
-				roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
-				if (roiRadius>20 || roiRadius<4) {
-					System.out.println(filepath + "looks suspicious");
-				}
-				x1 = midX-roiRadius;
-				y1 = midY-roiRadius;
+			else {
+				int x1 = midX-roiRadius;
+				int y1 = midY-roiRadius;
 				size = 2*(roiRadius*ratio);
-				roi = new OvalRoi(x1,y1,size,size);
+				OvalRoi roi = new OvalRoi(x1,y1,size,size);
 				image.setRoi(roi);
-				stats = image.getProcessor().getStatistics();
+				ImageStatistics stats = image.getProcessor().getStatistics();
 				imageMean = stats.mean;
-				imageSigma = stats.stdDev;
 				folderMean+=imageMean;
-				folderSigma+=imageSigma*imageSigma;
-				values.add(imageMean);
+				
+				
+				nFiles++;
 			}
-			folderMean/=files.size();
-			folderSigma = Math.sqrt(folderSigma);
-			sampleDeviation = calculateStandardDeviation(folderMean, values);
-			lineToWrite = folderpath + "\t" + folderMean + "\t" + sampleDeviation;
-			linesToWrite.add(lineToWrite);
 		}
-		writeToFile(rootPath,"log.txt",linesToWrite);
+
+		
+		String line = folderpath + "\t" + folderMean + "\t" + sampleDeviation + "\t" + FPAMean + "\t" + FPASigma;
+		writeToFile(_rootPath+"log.txt",line,true);
 	}
-	public void writeToFile(String rootFolder, String name, ArrayList<String> linesToWrite) {
+	
+	public void writeToFile(String filepath, String line, boolean append) {
 		try {
-			PrintWriter  out = new PrintWriter(rootFolder + name,"UTF-8");
-			for(String line:linesToWrite) {
-				out.write(line + "\n");
-			}
+			PrintWriter  out = new PrintWriter(new FileOutputStream(new File(filepath), append));
+			out.write(line);
 			out.close();
 		}catch (IOException e) {
 			System.out.println(e.getMessage());
@@ -177,7 +190,23 @@ public class CalibrationParser{
 		String jpegFilepath = csvFilename.replace(".csv",".jpeg");
 		return new File(jpegFilepath).exists();
 	}
-	@SuppressWarnings("resource")
+	public double getFPATemp(String filepath) {
+		double temperature = -999;
+		try {
+			BufferedReader br = new BufferedReader(new FileReader(filepath));
+			String line = br.readLine();
+			Scanner s = new Scanner(line);
+			s.useDelimiter("\\s+");
+			s.next();
+			s.next();
+			temperature = s.nextDouble();
+			br.close();
+			s.close();
+		}catch (IOException e) {
+			System.out.println(e.getMessage());
+		}
+		return temperature;
+	}
 	public int[][] getPixelValuesFromCSV(String filepath){
 		int[][] pixels = new int[_width][_height];
 		try {
@@ -196,6 +225,7 @@ public class CalibrationParser{
 				line = br.readLine();
 				y++;
 			}
+			br.close();
 		}catch (IOException e) {
 			System.out.println(e.getMessage());
 			return null;
@@ -227,8 +257,8 @@ public class CalibrationParser{
 		}
 		return image;
 	}
-	public static void main(String[] args) {
-		new CalibrationParser().run("D:\\Lepton\\DEC_16_lepton\\Calib_October_17\\",0.667);
+public static void main(String[] args) {
+		new CalibrationParser().run("D:\\Lepton\\DEC_16_lepton\\Calib_October_17\\Calib\\",0.667);
 	}
 
 }
