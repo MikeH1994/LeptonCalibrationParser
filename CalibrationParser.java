@@ -42,25 +42,10 @@ public class CalibrationParser{
 		}
 
 	}
-	public void delete(String filepath) {
-		File file1 = new File(filepath);
-		if (!file1.delete()) {
-			System.out.println(filepath + " could not be deleted");
-		}
-		filepath = filepath.replace(".csv",".pgm");
-		file1 = new File(filepath);
-		if (file1.exists()) {
-			if (!file1.delete()) {
-				System.out.println(filepath + " could not be deleted");
-			}
-		}
-	}
-	
 	public void parseFolder(String folderpath,double ratio) {
-		double folderMean = 0;
-		double imageMean = 0;
+		double signalMean = 0,signalSigma = 0;
+		double signal = 0;
 		double FPATemp,FPAMean = 0, FPASigma = 0;
-		double sampleDeviation = 0;
 		int nFiles = 0;
 
 		int midX = _width/2;
@@ -70,6 +55,9 @@ public class CalibrationParser{
 		ArrayList<String> files = getFilepathsInFolder(folderpath);
 		ArrayList<Double> FPAValues = new ArrayList<Double>();
 		ArrayList<Double> imageValues = new ArrayList<Double>();
+		String outputFilepath = _rootPath+getFoldernameFromPath(folderpath) + ".txt";
+		writeToFile(outputFilepath,"",false);
+		
 		for(String filepath:files) {
 			ImagePlus image = loadImagePlus(filepath);
 			ImagePlus edgeDetectedImage = _edgeDetector.process(image);
@@ -85,17 +73,34 @@ public class CalibrationParser{
 				OvalRoi roi = new OvalRoi(x1,y1,size,size);
 				image.setRoi(roi);
 				ImageStatistics stats = image.getProcessor().getStatistics();
-				imageMean = stats.mean;
-				folderMean+=imageMean;
-				
+				signal = stats.mean;
+				FPATemp  
 				
 				nFiles++;
 			}
+			writeToFile(outputFilepath,,true);
 		}
 
 		
-		String line = folderpath + "\t" + folderMean + "\t" + sampleDeviation + "\t" + FPAMean + "\t" + FPASigma;
+		String line = folderpath + "\t" + signalMean + "\t" + signalSigma + "\t" + FPAMean + "\t" + FPASigma;
 		writeToFile(_rootPath+"log.txt",line,true);
+	}	
+	public void delete(String filepath) {
+		File file1 = new File(filepath);
+		if (!file1.delete()) {
+			System.out.println(filepath + " could not be deleted");
+		}
+		filepath = filepath.replace(".csv",".pgm");
+		file1 = new File(filepath);
+		if (file1.exists()) {
+			if (!file1.delete()) {
+				System.out.println(filepath + " could not be deleted");
+			}
+		}
+	}
+	public String getFoldernameFromPath(String filepath) {
+		String[] arr = filepath.split("\\");
+		return arr[arr.length-1];
 	}
 	
 	public void writeToFile(String filepath, String line, boolean append) {
@@ -257,7 +262,7 @@ public class CalibrationParser{
 		}
 		return image;
 	}
-public static void main(String[] args) {
+	public static void main(String[] args) {
 		new CalibrationParser().run("D:\\Lepton\\DEC_16_lepton\\Calib_October_17\\Calib\\",0.667);
 	}
 
