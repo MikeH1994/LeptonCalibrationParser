@@ -13,6 +13,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Scanner;
 import ij.gui.NewImage;
 import ij.io.FileSaver;
@@ -28,62 +29,71 @@ public class CalibrationParser{
 	boolean _print = true;
 	String _rootPath;
 	Canny_Edge_Detector _edgeDetector = new Canny_Edge_Detector();
+	HashMap<String,double[]> _folderTemperatures = new HashMap<String,double[]>();
 
 	public void run(String rootPath,double ratio) {
 		//ROI oval represented by box surrounding it; x0,y0 are topleft corner.
 		_rootPath = rootPath;
+		loadTemperatures();
 		ArrayList<String> subfolders = getSubFolderPaths(rootPath);
 		
-		String header = "Folder\tMean\tSigma\tFPATemp\tSigma";
-		writeToFile(rootPath+"log.txt",header,false);
+		writeToFile(rootPath+"log.txt","",false);
+		writeToFile(_rootPath+"log.txt","#TIBB Temp\tSigma\tSignal Value\tSigma\tFPA Temperature\tFilename\n",true);
 
 		for(String folderpath:subfolders) {
+			if (_print) {
+				System.out.println(folderpath + " loading");
+			}
 			parseFolder(folderpath,ratio);
 		}
 
 	}
 	public void parseFolder(String folderpath,double ratio) {
 		double signalMean = 0,signalSigma = 0;
-		double signal = 0;
-		double FPATemp,FPAMean = 0, FPASigma = 0;
-		int nFiles = 0;
-
+		double FPAMean = 0, FPASigma = 0;
+		double signal,FPATemp;
 		int midX = _width/2;
 		int midY = _height/2;
-		double size;
 
 		ArrayList<String> files = getFilepathsInFolder(folderpath);
 		ArrayList<Double> FPAValues = new ArrayList<Double>();
-		ArrayList<Double> imageValues = new ArrayList<Double>();
-		String outputFilepath = _rootPath+getFoldernameFromPath(folderpath) + ".txt";
-		writeToFile(outputFilepath,"",false);
-		
+		ArrayList<Double> signalValues = new ArrayList<Double>();
+		//writeToFile(_rootPath+"log.txt",folderpath + "\n",true);
+		//writeToFile(_rootPath+"log.txt","File\tSignal Value\tFPA Temperature \t ROI Size\n",true);
 		for(String filepath:files) {
+			boolean flag = true;
 			ImagePlus image = loadImagePlus(filepath);
 			ImagePlus edgeDetectedImage = _edgeDetector.process(image);
-			int roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
+			double roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
 			if (roiRadius>20 || roiRadius<4) {
 				System.out.println("Deleting " + filepath);
 				delete(filepath);
+				flag = false;
 			}
-			else {
-				int x1 = midX-roiRadius;
-				int y1 = midY-roiRadius;
-				size = 2*(roiRadius*ratio);
-				OvalRoi roi = new OvalRoi(x1,y1,size,size);
+			if (flag) {
+				roiRadius*=ratio;
+				int x1 = (int) (midX-roiRadius);
+				int y1 = (int) (midY-roiRadius);
+				OvalRoi roi = new OvalRoi(x1,y1,2*roiRadius,2*roiRadius);
 				image.setRoi(roi);
 				ImageStatistics stats = image.getProcessor().getStatistics();
 				signal = stats.mean;
-				FPATemp  
-				
-				nFiles++;
+				signalValues.add(signal);
+				FPATemp = getFPATemp(filepath); 
+				FPAValues.add(FPATemp);
+				double[] tibbTemp = _folderTemperatures.get(getNameFromPath(folderpath));
+				String str = tibbTemp[0] + "\t" + tibbTemp[1] + "\t" + signal + "\t" + stats.stdDev + "\t" + FPATemp +"\t#" + getNameAndParentFolder(filepath) + "\n";
+				writeToFile(_rootPath+"log.txt",str,true);
 			}
-			writeToFile(outputFilepath,,true);
+			
 		}
 
-		
-		String line = folderpath + "\t" + signalMean + "\t" + signalSigma + "\t" + FPAMean + "\t" + FPASigma;
-		writeToFile(_rootPath+"log.txt",line,true);
+		signalMean = calculateMean(signalValues);
+		signalSigma = calculateSigma(signalMean,signalValues);
+		FPAMean = calculateMean(FPAValues);
+		FPASigma = calculateSigma(FPAMean, FPAValues);
+		//String line = "Signal\tSigma\tFPA Temp\tSigma\n" + signalMean + "\t" + signalSigma + "\t" + FPAMean + "\t" + FPASigma + "\n================\n";
+		//writeToFile(_rootPath+"log.txt",line,true);
 	}	
 	public void delete(String filepath) {
 		File file1 = new File(filepath);
@@ -98,11 +108,14 @@ public class CalibrationParser{
 			}
 		}
 	}
-	public String getFoldernameFromPath(String filepath) {
-		String[] arr = filepath.split("\\");
+	public String getNameFromPath(String filepath) {
+		String[] arr = filepath.split("\\\\");
 		return arr[arr.length-1];
 	}
-	
+	public String getNameAndParentFolder(String filepath) {
+		String[] arr = filepath.split("\\\\");
+		return arr[arr.length-2] + "\\" + arr[arr.length-1];
+	}
 	public void writeToFile(String filepath, String line, boolean append) {
 		try {
 			PrintWriter  out = new PrintWriter(new FileOutputStream(new File(filepath), append));
@@ -112,7 +125,28 @@ public class CalibrationParser{
 			System.out.println(e.getMessage());
 		}
 	}
-	public double calculateStandardDeviation(double mean, ArrayList<Double> values) {
+	public void loadTemperatures() {
+		String infoPath = _rootPath + "\\info.txt";
+		try {
+			BufferedReader br = new BufferedReader(new FileReader(infoPath));
+			String line = br.readLine();
+			while(line!=null) {
+				Scanner s = new Scanner(line);
+				s.useDelimiter("\t");
+				double[] arr =new double[2];
+				String foldername = s.next();
+				arr[0] = s.nextDouble();
+				arr[1] = s.nextDouble();
+				_folderTemperatures.put(foldername,arr);
+				line =br.readLine();
+				s.close();
+			}
+			br.close();
+		}catch(IOException e) {
+			System.out.println(e.getMessage());
+		}
+	}
+	public double calculateSigma(double mean, ArrayList<Double> values) {
 		//return sample deviation
 		double sd = 0;
 		for(double x_i:values) {
@@ -121,6 +155,16 @@ public class CalibrationParser{
 		sd/=(values.size()-1);
 		sd = Math.sqrt(sd);
 		return sd;
+	}
+	public double calculateMean(ArrayList<Double> values) {
+		double sum = 0;
+		if (values.size()==0) {
+			return 0;
+		}
+		for (double value:values) {
+			sum+=value;
+		}
+		return sum/values.size();
 	}
 	public int getROIRadiusFromEdgeDetectedImage(ImagePlus img) {
 		int midX = _width/2;
@@ -263,7 +307,7 @@ public class CalibrationParser{
 		return image;
 	}
 	public static void main(String[] args) {
-		new CalibrationParser().run("D:\\Lepton\\DEC_16_lepton\\Calib_October_17\\Calib\\",0.667);
+		new CalibrationParser().run("D:\\Lepton\\DEC_16\\Calib_October_17\\Calib\\",0.667);
 	}
 
 }
