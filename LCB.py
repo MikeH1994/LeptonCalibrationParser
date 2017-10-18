@@ -11,14 +11,14 @@ _FPACol_ = 4
 _MINSIGNALERR_ = 5
 _MINFPAERR_ = 0.005
 
-def run(filepath,outputpath = None):
-    if outputpath == None:
-        outputpath = os.path.dirname(os.path.realpath(filepath)) + "processedData.txt"
+def run(filepath):
+    outname = filepath.split("\\")[-1].replace("RAW.txt","PROCESSED.txt")
+    outputpath = os.path.dirname(os.path.realpath(filepath)) + "\\" + outname
 
     #get binned data
     binnedData = getBinnedData(filepath)
     processedData = []
-    processedData.append(['#ITS90 Temp\tITS90 Stdev\tSignal\tSignal Stdev\tFPA Temp\tFPA Stdev\tn'])
+    processedData.append(['#ITS90 Temp\tITS90 Stdev\tSignal\tSignal Stdev\tFPA Temp\tFPA Stdev\tWeight\tn'])
     for bin in binnedData:
         datapoint = produceDatapoint(bin)
         if datapoint == None:
@@ -26,19 +26,49 @@ def run(filepath,outputpath = None):
         else:
             processedData.append(datapoint)
 
-
-    tempIndex = 0
-    prevF250Temp = processedData[0][-1]
-    for i in range(len(processedData)):
-        pass#while
+    sortAscendingData(processedData)
+    applyWeights(processedData)
 
     f = file(outputpath,'w')
     for point in processedData:
-        print(point)
         for col in point:
             f.write(str (col) + "\t")
         f.write("\n")
     f.close()
+
+    print("File written to " + outputpath)
+
+def sortAscendingData(processedData):
+    #sort in terms of increasing FPA Temperature for each F250 setpoint
+    nChanges = 1
+    while nChanges>0:
+        nChanges = 0
+        for i in range(1,len(processedData)-1):
+            if abs(processedData[i][0]-processedData[i+1][0])<1:
+                if processedData[i][4]>processedData[i+1][4]:
+                    temp1 = processedData[i]
+                    processedData[i] = processedData[i+1]
+                    processedData[i+1] = temp1
+                    nChanges+=1
+
+def applyWeights(processedData):
+    tempIndex = 1
+    prevF250Temp = processedData[tempIndex][0]
+    prevFPATemp = processedData[tempIndex][4]
+    while tempIndex<len(processedData):
+        startVal = tempIndex
+        prevF250Temp = processedData[tempIndex][0]
+        prevFPATemp = processedData[tempIndex][4]
+        while tempIndex<len(processedData) and abs(prevF250Temp-processedData[tempIndex][0])<1 and abs(prevFPATemp-processedData[tempIndex][4])<1:
+            prevF250Temp = processedData[tempIndex][0]
+            prevFPATemp = processedData[tempIndex][4]
+            tempIndex+=1
+        endVal = tempIndex
+
+        for i in range(startVal,endVal):
+            processedData[i][6] = 1.0/(endVal-startVal)
+
+
 
 def produceDatapoint(FPABin):
     if (len(FPABin))==0:
@@ -49,7 +79,7 @@ def produceDatapoint(FPABin):
     FPA, FPAStdev = getAverageAndStdev(FPABin,_FPACol_,minErr = _MINFPAERR_)
     nMeasurements = len(FPABin)
 
-    return [F250,F250Err,signal,signalStdev,FPA,FPAStdev, nMeasurements]
+    return [F250,F250Err,signal,signalStdev,FPA,FPAStdev,0,nMeasurements]
 
 def getAverageAndStdev(array,col,minErr = 0):
     mean = 0
@@ -123,6 +153,7 @@ def getMinMaxFPATemp(sortedDataElem):
             max = FPATemp
     return min,max
 
-
-
-run('D:\\Lepton\\Analysis\\DEC_16_STABILITY_RAW.txt')
+run('D:\\Lepton\\Data\\DEC_16_STABILITY_RAW.txt')
+run('D:\\Lepton\\Data\\DEC_16_CALIB_RAW.txt')
+run('D:\\Lepton\\Data\\APR_17_STABILITY_RAW.txt')
+run('D:\\Lepton\\Data\\APR_17_CALIB_RAW.txt')
