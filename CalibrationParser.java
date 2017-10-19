@@ -37,8 +37,11 @@ public class CalibrationParser{
 		loadTemperatures();
 		ArrayList<String> subfolders = getSubFolderPaths(rootPath);
 		
-		writeToFile(rootPath+"log.txt","",false);
-		writeToFile(_rootPath+"log.txt","#TIBB Temp\tSigma\tSignal Value\tSigma\tFPA Temperature\tFilename\n",true);
+		writeToFile(_rootPath+"RAW_.txt","#TIBB Temp\tSigma\tSignal Value\tSigma\tFPA Temperature\tFilename\n",false);
+		writeToFile(rootPath+"RAW_.txt","#ratio="+ratio+"\n",true);
+		writeToFile(rootPath+"AVERAGE_.txt","#Tibb Temp\tSigma\tFPAMean\tFPASigma\tSignalMean\tSignalSigma\n",false);
+		writeToFile(rootPath+"AVERAGE_.txt","#ratio="+ratio+"\n",true);
+		//	String str = tibbTemp[0] + "\t" + tibbTemp[1]+"\t"+FPAMean +"\t"+FPASigma+"\t"+signalMean+"\t"+signalSigma+"\n";
 
 		for(String folderpath:subfolders) {
 			if (_print) {
@@ -58,6 +61,8 @@ public class CalibrationParser{
 		ArrayList<String> files = getFilepathsInFolder(folderpath);
 		ArrayList<Double> FPAValues = new ArrayList<Double>();
 		ArrayList<Double> signalValues = new ArrayList<Double>();
+		double[] tibbTemp = _folderTemperatures.get(getNameFromPath(folderpath));
+
 		//writeToFile(_rootPath+"log.txt",folderpath + "\n",true);
 		//writeToFile(_rootPath+"log.txt","File\tSignal Value\tFPA Temperature \t ROI Size\n",true);
 		for(String filepath:files) {
@@ -65,35 +70,33 @@ public class CalibrationParser{
 			ImagePlus image = loadImagePlus(filepath);
 			ImagePlus edgeDetectedImage = _edgeDetector.process(image);
 			double roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
-			if (roiRadius>20 || roiRadius<4) {
-				System.out.println("Deleting " + filepath);
-				delete(filepath);
+			roiRadius*=ratio;
+			int x1 = (int) (midX-roiRadius);
+			int y1 = (int) (midY-roiRadius);
+			OvalRoi roi = new OvalRoi(x1,y1,2*roiRadius,2*roiRadius);
+			image.setRoi(roi);
+			ImageStatistics stats = image.getProcessor().getStatistics();
+			signal = stats.mean;
+			if (roiRadius>20 || roiRadius<4 || stats.stdDev>30) {
 				flag = false;
 			}
 			if (flag) {
-				roiRadius*=ratio;
-				int x1 = (int) (midX-roiRadius);
-				int y1 = (int) (midY-roiRadius);
-				OvalRoi roi = new OvalRoi(x1,y1,2*roiRadius,2*roiRadius);
-				image.setRoi(roi);
-				ImageStatistics stats = image.getProcessor().getStatistics();
-				signal = stats.mean;
 				signalValues.add(signal);
 				FPATemp = getFPATemp(filepath); 
 				FPAValues.add(FPATemp);
-				double[] tibbTemp = _folderTemperatures.get(getNameFromPath(folderpath));
 				String str = tibbTemp[0] + "\t" + tibbTemp[1] + "\t" + signal + "\t" + stats.stdDev + "\t" + FPATemp +"\t#" + getNameAndParentFolder(filepath) + "\n";
-				writeToFile(_rootPath+"log.txt",str,true);
+				writeToFile(_rootPath+"RAW_.txt",str,true);
 			}
-			
-		}
 
-		signalMean = calculateMean(signalValues);
-		signalSigma = calculateSigma(signalMean,signalValues);
-		FPAMean = calculateMean(FPAValues);
-		FPASigma = calculateSigma(FPAMean, FPAValues);
-		//String line = "Signal\tSigma\tFPA Temp\tSigma\n" + signalMean + "\t" + signalSigma + "\t" + FPAMean + "\t" + FPASigma + "\n================\n";
-		//writeToFile(_rootPath+"log.txt",line,true);
+		}
+		if (tibbTemp!=null) {
+			signalMean = calculateMean(signalValues);
+			signalSigma = calculateSigma(signalMean,signalValues);
+			FPAMean = calculateMean(FPAValues);
+			FPASigma = calculateSigma(FPAMean,FPAValues);
+			String str = tibbTemp[0] + "\t" + tibbTemp[1]+"\t"+FPAMean +"\t"+FPASigma+"\t"+signalMean+"\t"+signalSigma+"\n";
+			writeToFile(_rootPath+"AVERAGE_.txt",str,true);
+		}
 	}	
 	public void delete(String filepath) {
 		File file1 = new File(filepath);
@@ -212,33 +215,39 @@ public class CalibrationParser{
 		ArrayList<String> files = new ArrayList<String>();
 		
 		File folder = new File(folderpath);
-		String[] directories = folder.list(new FilenameFilter() {
+		String[] fileList = folder.list(new FilenameFilter() {
 			  @Override
 			  public boolean accept(File current, String name) {
 				  if (!new File(current, name).isFile()) {
 					  return false;
 				  }
-				  if (name.endsWith(".jpeg") && _useJPEGs) {
-					  return true;
-				  }
-				  if (name.endsWith(".csv") && (!_useJPEGs || !jpegExistsForCSV(folderpath + "\\" + name))) {
+				  if (name.endsWith(".csv")) {
 					return true;
 				  }
 				  
 			    return false;
 			  }
 			});
+		fileList = orderFilesNumerically(fileList);  
 		String path;
-		for(int i = 0; i<directories.length; i++) {
-			path = folder + "\\" + directories[i];
+		for(int i = 0; i<fileList.length; i++) {
+			path = folder + "\\" + fileList[i];
 			files.add(path);
 		}		
 		return files;
 	}
-	public boolean jpegExistsForCSV(String csvFilename) {
-		String jpegFilepath = csvFilename.replace(".csv",".jpeg");
-		return new File(jpegFilepath).exists();
+	public String[] orderFilesNumerically(String[] files) {
+		int[] filenumber = new int[files.length];
+		for (int i = 0; i<filenumber.length; i++) {
+			filenumber[i] = Integer.parseInt(files[i].replaceAll(".csv", ""));
+		}
+		Arrays.sort(filenumber);
+		for(int i = 0; i<filenumber.length;i++) {
+			files[i] = Integer.toString(filenumber[i]) + ".csv";
+		}
+		return files;
 	}
+
 	public double getFPATemp(String filepath) {
 		double temperature = -999;
 		try {
@@ -307,7 +316,12 @@ public class CalibrationParser{
 		return image;
 	}
 	public static void main(String[] args) {
-		new CalibrationParser().run("D:\\Lepton\\DEC_16\\Calib_October_17\\Calib\\",0.667);
+		double ratio = 0.6667;
+		CalibrationParser cp = new CalibrationParser();
+		cp.run("D:\\Lepton\\Data\\DEC_16\\Calib_October_17\\Stability\\",ratio);
+		cp.run("D:\\Lepton\\Data\\DEC_16\\Calib_October_17\\Calib\\", ratio);
+		cp.run("D:\\Lepton\\Data\\APR_17\\Calib_October_17\\Stability\\",ratio);
+		cp.run("D:\\Lepton\\Data\\APR_17\\Calib_October_17\\Calib\\", ratio);
 	}
 
 }
