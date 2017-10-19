@@ -51,6 +51,7 @@ def writeToFile2d(outputpath, data):
             for col in point:
                 f.write(str(col) + "\t")
             f.write("\n")
+        f.write("\n")
     f.close()
 
 def applyWeights(processedData):
