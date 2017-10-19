@@ -37,7 +37,7 @@ public class CalibrationParser{
 		loadTemperatures();
 		ArrayList<String> subfolders = getSubFolderPaths(rootPath);
 		
-		writeToFile(_rootPath+"RAW_.txt","#TIBB Temp\tSigma\tSignal Value\tSigma\tFPA Temperature\tFilename\n",false);
+		writeToFile(rootPath+"RAW_.txt","#TIBB Temp\tSigma\tSignal Value\tSigma\tFPA Temperature\tradius\tFilename\n",false);
 		writeToFile(rootPath+"RAW_.txt","#ratio="+ratio+"\n",true);
 		writeToFile(rootPath+"AVERAGE_.txt","#Tibb Temp\tSigma\tFPAMean\tFPASigma\tSignalMean\tSignalSigma\n",false);
 		writeToFile(rootPath+"AVERAGE_.txt","#ratio="+ratio+"\n",true);
@@ -65,29 +65,28 @@ public class CalibrationParser{
 
 		//writeToFile(_rootPath+"log.txt",folderpath + "\n",true);
 		//writeToFile(_rootPath+"log.txt","File\tSignal Value\tFPA Temperature \t ROI Size\n",true);
-		for(String filepath:files) {
+		for(int i = 0; i<files.size(); i++) {
+			String filepath = files.get(i);
 			boolean flag = true;
 			ImagePlus image = loadImagePlus(filepath);
-			ImagePlus edgeDetectedImage = _edgeDetector.process(image);
-			double roiRadius = getROIRadiusFromEdgeDetectedImage(edgeDetectedImage);
+			ttd(image);
+			double roiRadius = ttd(image);
 			roiRadius*=ratio;
-			int x1 = (int) (midX-roiRadius);
-			int y1 = (int) (midY-roiRadius);
-			OvalRoi roi = new OvalRoi(x1,y1,2*roiRadius,2*roiRadius);
+			OvalRoi roi = createROI(roiRadius);
 			image.setRoi(roi);
 			ImageStatistics stats = image.getProcessor().getStatistics();
 			signal = stats.mean;
 			if (roiRadius>20 || roiRadius<4 || stats.stdDev>30) {
 				flag = false;
+				i+=3;
 			}
 			if (flag) {
 				signalValues.add(signal);
 				FPATemp = getFPATemp(filepath); 
 				FPAValues.add(FPATemp);
-				String str = tibbTemp[0] + "\t" + tibbTemp[1] + "\t" + signal + "\t" + stats.stdDev + "\t" + FPATemp +"\t#" + getNameAndParentFolder(filepath) + "\n";
+				String str = tibbTemp[0] + "\t" + tibbTemp[1] + "\t" + signal + "\t" + stats.stdDev + "\t" + FPATemp +"\t" + roiRadius + "\t#" + getNameAndParentFolder(filepath) + "\n";
 				writeToFile(_rootPath+"RAW_.txt",str,true);
 			}
-
 		}
 		if (tibbTemp!=null) {
 			signalMean = calculateMean(signalValues);
@@ -168,6 +167,29 @@ public class CalibrationParser{
 			sum+=value;
 		}
 		return sum/values.size();
+	}
+	public OvalRoi createROI(double radius) {
+		int x1 = (int) (_width/2-radius);
+		int y1 = (int) (_height/2-radius);
+		OvalRoi roi = new OvalRoi(x1,y1,2*radius,2*radius);
+		return roi;
+	}
+	public double ttd(ImagePlus img) {
+		double radius = 7;
+		double currentStdev = 0;
+		double prevStdev = 0;
+		OvalRoi roi = createROI(radius);
+		img.setRoi(roi);
+		currentStdev = img.getProcessor().getStatistics().stdDev;
+		prevStdev = currentStdev;
+		 do  {
+				prevStdev = currentStdev;
+				roi = createROI(radius);
+				img.setRoi(roi);
+				currentStdev = img.getProcessor().getStatistics().stdDev;
+				radius++;
+			}while (radius<30 && Math.abs(currentStdev-prevStdev)<3);
+		return radius-1;
 	}
 	public int getROIRadiusFromEdgeDetectedImage(ImagePlus img) {
 		int midX = _width/2;
